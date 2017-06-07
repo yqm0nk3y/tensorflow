@@ -5,72 +5,43 @@ package(default_visibility = ["//tensorflow:internal"])
 
 licenses(["notice"])  # Apache 2.0
 
-exports_files(["LICENSE"])
-
-filegroup(
-    name = "frontend",
-    srcs = [
-        "TAG",
-        "dist/bazel-html-imports.html",
-        "dist/index.html",
-        "dist/tf-tensorboard.html",
-        "//tensorflow/tensorboard/bower",
-        "//tensorflow/tensorboard/lib:all_files",
+py_binary(
+    name = "tensorboard",
+    srcs = ["tensorboard.py"],
+    data = [":assets"],
+    srcs_version = "PY2AND3",
+    deps = [
+        "//tensorflow/tensorboard/backend:application",
+        "//tensorflow/tensorboard/backend/event_processing:event_file_inspector",
+        "//tensorflow/tensorboard/plugins/audio:audio_plugin",
+        "//tensorflow/tensorboard/plugins/distributions:distributions_plugin",
+        "//tensorflow/tensorboard/plugins/graphs:graphs_plugin",
+        "//tensorflow/tensorboard/plugins/histograms:histograms_plugin",
+        "//tensorflow/tensorboard/plugins/images:images_plugin",
+        "//tensorflow/tensorboard/plugins/projector:projector_plugin",
+        "//tensorflow/tensorboard/plugins/scalars:scalars_plugin",
+        "//tensorflow/tensorboard/plugins/text:text_plugin",
+        "@org_pocoo_werkzeug//:werkzeug",
     ],
 )
 
-py_binary(
-    name = "tensorboard",
+filegroup(
+    name = "assets",
     srcs = [
-        "__main__.py",
-        "tensorboard.py",
-    ],
-    data = [":frontend"],
-    srcs_version = "PY2AND3",
-    deps = [
-        "//tensorflow/python:platform",
-        "//tensorflow/tensorboard/backend:server",
+        "TAG",
+        "//tensorflow/tensorboard/components:index.html",
     ],
 )
 
 filegroup(
     name = "all_files",
     srcs = glob(
-        ["**/*"],
+        ["**"],
         exclude = [
-            "**/METADATA",
-            "**/OWNERS",
-            "**/node_modules/**",
-            "**/typings/**",
+            "METADATA",
+            "OWNERS",
+            "tensorboard.google.bzl",
         ],
     ),
-    visibility = ["//tensorflow:__subpackages__"],
-)
-
-###### PLUGINS ######
-
-# Plugins don't have their own packages (BUILD files) because we want to
-# have only one BUILD file since each BUILD file needs special rewrite rules
-# in the git world.
-
-py_library(
-    name = "base_plugin",
-    srcs = ["plugins/base_plugin.py"],
-    srcs_version = "PY2AND3",
-)
-
-## Embedding projector ##
-py_library(
-    name = "projector",
-    srcs = glob(["plugins/projector/**/*.py"]),
-    srcs_version = "PY2AND3",
-    deps = [
-        ":base_plugin",
-        "//tensorflow/contrib/tensorboard:projector",
-        "//tensorflow/contrib/tensorboard:protos_all_py",
-        "//tensorflow/python:errors",
-        "//tensorflow/python:lib",
-        "//tensorflow/python:platform",
-        "//tensorflow/python:training",
-    ],
+    tags = ["notsan"],
 )

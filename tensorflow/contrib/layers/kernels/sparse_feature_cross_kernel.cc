@@ -399,7 +399,7 @@ class SparseFeatureCrossOp : public OpKernel {
               indices_list_in[i].shape().DebugString(), " at position ", i));
       OP_REQUIRES(
           context, indices_list_in[i].shape().dim_size(1) == 2,
-          errors::InvalidArgument("Expected D2 of index to be 2 got",
+          errors::InvalidArgument("Expected D2 of index to be 2 got ",
                                   indices_list_in[i].shape().dim_size(1),
                                   " at position ", i));
     }
@@ -494,6 +494,7 @@ class SparseFeatureCrossOp : public OpKernel {
     ExtractFeatureData(indices_list_in, batch_size, &feature_counts,
                        &feature_start_indices);
 
+    columns.reserve(values_list_in.size());
     for (int i = 0; i < values_list_in.size(); ++i) {
       columns.emplace_back(new SparseTensorColumn<InternalType>(
           values_list_in[i], std::move(feature_counts[i]),

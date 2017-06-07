@@ -179,6 +179,7 @@ class SliceOp : public OpKernel {
       HANDLE_DIM(4);
       HANDLE_DIM(5);
       HANDLE_DIM(6);
+      HANDLE_DIM(7);
 
 #undef HANDLE_DIM
 
@@ -222,7 +223,8 @@ namespace functor {
   DECLARE_CPU_SPEC(T, 3); \
   DECLARE_CPU_SPEC(T, 4); \
   DECLARE_CPU_SPEC(T, 5); \
-  DECLARE_CPU_SPEC(T, 6);
+  DECLARE_CPU_SPEC(T, 6); \
+  DECLARE_CPU_SPEC(T, 7);
 
 TF_CALL_ALL_TYPES(DECLARE_FOR_N);
 DECLARE_FOR_N(bfloat16);
@@ -240,6 +242,7 @@ DECLARE_FOR_N(bfloat16);
                           SliceOp<CPUDevice, type>)
 
 TF_CALL_POD_STRING_TYPES(REGISTER_SLICE);
+TF_CALL_QUANTIZED_TYPES(REGISTER_SLICE);
 REGISTER_SLICE(bfloat16);
 
 #undef REGISTER_SLICE
@@ -262,7 +265,8 @@ namespace functor {
   DECLARE_GPU_SPEC(T, 3); \
   DECLARE_GPU_SPEC(T, 4); \
   DECLARE_GPU_SPEC(T, 5); \
-  DECLARE_GPU_SPEC(T, 6);
+  DECLARE_GPU_SPEC(T, 6); \
+  DECLARE_GPU_SPEC(T, 7);
 
 TF_CALL_GPU_NUMBER_TYPES(DECLARE_FOR_N);
 TF_CALL_complex64(DECLARE_FOR_N);
@@ -321,10 +325,12 @@ namespace functor {
   DECLARE_SYCL_SPEC(T, 3); \
   DECLARE_SYCL_SPEC(T, 4); \
   DECLARE_SYCL_SPEC(T, 5); \
-  DECLARE_SYCL_SPEC(T, 6);
+  DECLARE_SYCL_SPEC(T, 6); \
+  DECLARE_SYCL_SPEC(T, 7);
 
-TF_CALL_GPU_NUMBER_TYPES(DECLARE_FOR_N);
+TF_CALL_GPU_NUMBER_TYPES_NO_HALF(DECLARE_FOR_N);
 DECLARE_FOR_N(int32);
+DECLARE_FOR_N(bool);
 
 #undef DECLARE_FOR_N
 #undef DECLARE_SYCL_SPEC
@@ -339,11 +345,8 @@ DECLARE_FOR_N(int32);
                               .TypeConstraint<int32>("Index"), \
                           SliceOp<SYCLDevice, type>)
 
-TF_CALL_GPU_NUMBER_TYPES(REGISTER_SYCL);
+TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_SYCL);
 
-// A special GPU kernel for int32.
-// TODO(b/25387198): Also enable int32 in device memory. This kernel
-// registration requires all int32 inputs and outputs to be in host memory.
 REGISTER_KERNEL_BUILDER(Name("Slice")
                             .Device(DEVICE_SYCL)
                             .TypeConstraint<int32>("T")
@@ -353,7 +356,6 @@ REGISTER_KERNEL_BUILDER(Name("Slice")
                             .HostMemory("size")
                             .HostMemory("output"),
                         SliceOp<CPUDevice, int32>);
-
 #undef REGISTER_SYCL
 
 #endif  // TENSORFLOW_USE_SYCL
