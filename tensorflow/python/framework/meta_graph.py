@@ -31,6 +31,7 @@ from tensorflow.core.framework import graph_pb2
 from tensorflow.core.framework import op_def_pb2
 from tensorflow.core.protobuf import meta_graph_pb2
 from tensorflow.core.protobuf import saver_pb2
+from tensorflow.python.eager import context
 from tensorflow.python.framework import graph_io
 from tensorflow.python.framework import importer
 from tensorflow.python.framework import op_def_registry
@@ -43,6 +44,11 @@ from tensorflow.python.util import compat
 
 # Prefix to be added to unbound input names so they are easily identifiable.
 _UNBOUND_INPUT_PREFIX = "$unbound_inputs_"
+
+# List of collections that didn't register proto functions, as a result in
+# a previously exported meta_graph the items are of a different data type.
+_COMPAT_COLLECTION_LIST = [ops.GraphKeys.LOCAL_VARIABLES,
+                           ops.GraphKeys.MODEL_VARIABLES]
 
 
 def _node_def(from_node_def, export_scope, unbound_inputs, clear_devices=False):
@@ -510,7 +516,7 @@ def create_meta_graph_def(meta_info_def=None,
     meta_graph_def.saver_def.MergeFrom(saver_def)
 
   # Adds collection_list.
-  if collection_list:
+  if collection_list is not None:
     clist = collection_list
   else:
     clist = graph.get_all_collection_keys()
@@ -577,8 +583,8 @@ def import_scoped_meta_graph(meta_graph_or_file,
   the argument is a file containing a `MetaGraphDef` protocol buffer ,
   it constructs a protocol buffer from the file content. The function
   then adds all the nodes from the `graph_def` field to the
-  current graph, recreates the desired collections, and returns a saver
-  constructed from the `saver_def` field.
+  current graph, recreates the desired collections, and returns a dictionary of
+  all the Variables imported into the name scope.
 
   In combination with `export_scoped_meta_graph()`, this function can be used to
 
@@ -612,6 +618,9 @@ def import_scoped_meta_graph(meta_graph_or_file,
   Raises:
     ValueError: If the graph_def contains unbound inputs.
   """
+  if context.in_eager_mode():
+    raise ValueError("Exporting/importing meta graphs is not supported when "
+                     "eager execution is enabled.")
   if isinstance(meta_graph_or_file, meta_graph_pb2.MetaGraphDef):
     meta_graph_def = meta_graph_or_file
   else:
@@ -654,7 +663,7 @@ def import_scoped_meta_graph(meta_graph_or_file,
         [part for part in [graph.get_name_scope(), import_scope] if part])
 
     # Restores all the other collections.
-    for key, col_def in meta_graph_def.collection_def.items():
+    for key, col_def in sorted(meta_graph_def.collection_def.items()):
       # Don't add unbound_inputs to the new graph.
       if key == unbound_inputs_col_name:
         continue
@@ -667,8 +676,7 @@ def import_scoped_meta_graph(meta_graph_or_file,
                       key)
         continue
       from_proto = ops.get_from_proto_function(key)
-      if from_proto:
-        assert kind == "bytes_list"
+      if from_proto and kind == "bytes_list":
         proto_type = ops.get_collection_proto_type(key)
         for value in col_def.bytes_list.value:
           proto = proto_type()
@@ -677,6 +685,11 @@ def import_scoped_meta_graph(meta_graph_or_file,
               key, from_proto(proto, import_scope=scope_to_prepend_to_names))
       else:
         field = getattr(col_def, kind)
+        if key in _COMPAT_COLLECTION_LIST:
+          logging.warning(
+              "The saved meta_graph is possibly from an older release:\n"
+              "'%s' collection should be of type 'byte_list', but instead "
+              "is of type '%s'.", key, kind)
         if kind == "node_list":
           for value in field.value:
             col_op = graph.as_graph_element(
@@ -749,6 +762,9 @@ def export_scoped_meta_graph(filename=None,
   Raises:
     ValueError: When the `GraphDef` is larger than 2GB.
   """
+  if context.in_eager_mode():
+    raise ValueError("Exporting/importing meta graphs is not supported when "
+                     "Eager Execution is enabled.")
   graph = graph or ops.get_default_graph()
 
   exclude_nodes = None
@@ -757,6 +773,7 @@ def export_scoped_meta_graph(filename=None,
     if graph_def:
       new_graph_def = graph_pb2.GraphDef()
       new_graph_def.versions.CopyFrom(graph_def.versions)
+      new_graph_def.library.CopyFrom(graph_def.library)
 
       if clear_extraneous_savers:
         exclude_nodes = _find_extraneous_saver_nodes(graph_def, saver_def)
@@ -794,6 +811,9 @@ def export_scoped_meta_graph(filename=None,
           bytesize += value.node_def.ByteSize()
           if bytesize >= (1 << 31) or bytesize < 0:
             raise ValueError("GraphDef cannot be larger than 2GB.")
+
+      graph._copy_functions_to_graph_def(graph_def, bytesize)  # pylint: disable=protected-access
+
     # It's possible that not all the inputs are in the export_scope.
     # If we would like such information included in the exported meta_graph,
     # add them to a special unbound_inputs collection.

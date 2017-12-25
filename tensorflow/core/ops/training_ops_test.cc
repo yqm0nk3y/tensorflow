@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/shape_inference_testutil.h"
 #include "tensorflow/core/platform/test.h"
@@ -331,6 +330,40 @@ TEST(TrainingOpsTest, SparseApplyRMSProp_ShapeFn) {
   INFER_ERROR("Shape must be rank 0 but is rank 1", op, "?;?;?;?;[?];?;?;?;?");
   INFER_ERROR("Shape must be rank 0 but is rank 1", op, "?;?;?;?;?;[?];?;?;?");
   INFER_ERROR("Shape must be rank 0 but is rank 1", op, "?;?;?;?;?;?;[?];?;?");
+}
+
+TEST(TrainingOpsTest, ApplyAddSign_ShapeFn) {
+  ShapeInferenceTestOp op("ApplyAddSign");
+
+  // Output is a merge of inputs 0, 1, and 6 (var, ms, and grad).
+  INFER_OK(op, "[1,?,?];[?,2,?];[];[];[];[];[?,?,2]", "[d0_0,d1_1,d6_2]");
+  INFER_ERROR("Dimension 0 in both shapes must be equal, but are 1 and 2", op,
+              "[1];[2];[];[];[];[];[1]");
+  INFER_ERROR("Dimension 0 in both shapes must be equal, but are 1 and 2", op,
+              "[1];[1];[];[];[];[];[2]");
+
+  // lr, alpha, sign_decay, and beta must be scalars.
+  INFER_ERROR("Shape must be rank 0 but is rank 1", op, "?;?;[?];?;?;?;?");
+  INFER_ERROR("Shape must be rank 0 but is rank 1", op, "?;?;?;[?];?;?;?");
+  INFER_ERROR("Shape must be rank 0 but is rank 1", op, "?;?;?;?;[?];?;?");
+  INFER_ERROR("Shape must be rank 0 but is rank 1", op, "?;?;?;?;?;[?];?");
+}
+
+TEST(TrainingOpsTest, ApplyPowerSign_ShapeFn) {
+  ShapeInferenceTestOp op("ApplyPowerSign");
+
+  // Output is a merge of inputs 0, 1, and 6 (var, ms, and grad).
+  INFER_OK(op, "[1,?,?];[?,2,?];[];[];[];[];[?,?,2]", "[d0_0,d1_1,d6_2]");
+  INFER_ERROR("Dimension 0 in both shapes must be equal, but are 1 and 2", op,
+              "[1];[2];[];[];[];[];[1]");
+  INFER_ERROR("Dimension 0 in both shapes must be equal, but are 1 and 2", op,
+              "[1];[1];[];[];[];[];[2]");
+
+  // lr, logbase, sign_decay, and beta must be scalars.
+  INFER_ERROR("Shape must be rank 0 but is rank 1", op, "?;?;[?];?;?;?;?");
+  INFER_ERROR("Shape must be rank 0 but is rank 1", op, "?;?;?;[?];?;?;?");
+  INFER_ERROR("Shape must be rank 0 but is rank 1", op, "?;?;?;?;[?];?;?");
+  INFER_ERROR("Shape must be rank 0 but is rank 1", op, "?;?;?;?;?;[?];?");
 }
 
 }  // end namespace tensorflow

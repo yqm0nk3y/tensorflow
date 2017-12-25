@@ -190,7 +190,8 @@ REGISTER_OP("SerializeSparse")
     .Input("sparse_values: T")
     .Input("sparse_shape: int64")
     .Attr("T: type")
-    .Output("serialized_sparse: string")
+    .Output("serialized_sparse: out_type")
+    .Attr("out_type: {string, variant} = DT_STRING")
     .SetShapeFn([](InferenceContext* c) {
       ShapeHandle unused;
       TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 2, &unused));
@@ -200,11 +201,13 @@ REGISTER_OP("SerializeSparse")
       return Status::OK();
     })
     .Doc(R"doc(
-Serialize a `SparseTensor` into a string 3-vector (1-D `Tensor`) object.
+Serialize a `SparseTensor` into a `[3]` `Tensor` object.
 
 sparse_indices: 2-D.  The `indices` of the `SparseTensor`.
 sparse_values: 1-D.  The `values` of the `SparseTensor`.
 sparse_shape: 1-D.  The `shape` of the `SparseTensor`.
+out_type: The `dtype` to use for serialization; the supported types are `string`
+  (default) and `variant`.
 )doc");
 
 REGISTER_OP("SerializeManySparse")
@@ -212,7 +215,8 @@ REGISTER_OP("SerializeManySparse")
     .Input("sparse_values: T")
     .Input("sparse_shape: int64")
     .Attr("T: type")
-    .Output("serialized_sparse: string")
+    .Output("serialized_sparse: out_type")
+    .Attr("out_type: {string, variant} = DT_STRING")
     .SetShapeFn([](InferenceContext* c) {
       ShapeHandle unused;
       TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 2, &unused));
@@ -222,7 +226,7 @@ REGISTER_OP("SerializeManySparse")
       return Status::OK();
     })
     .Doc(R"doc(
-Serialize an `N`-minibatch `SparseTensor` into an `[N, 3]` string `Tensor`.
+Serialize an `N`-minibatch `SparseTensor` into an `[N, 3]` `Tensor` object.
 
 The `SparseTensor` must have rank `R` greater than 1, and the first dimension
 is treated as the minibatch dimension.  Elements of the `SparseTensor`
@@ -235,14 +239,83 @@ The minibatch size `N` is extracted from `sparse_shape[0]`.
 sparse_indices: 2-D.  The `indices` of the minibatch `SparseTensor`.
 sparse_values: 1-D.  The `values` of the minibatch `SparseTensor`.
 sparse_shape: 1-D.  The `shape` of the minibatch `SparseTensor`.
+out_type: The `dtype` to use for serialization; the supported types are `string`
+  (default) and `variant`.
+)doc");
+
+REGISTER_OP("DeserializeSparse")
+    .Input("serialized_sparse: Tserialized")
+    .Output("sparse_indices: int64")
+    .Output("sparse_values: dtype")
+    .Output("sparse_shape: int64")
+    .Attr("dtype: type")
+    .Attr("Tserialized: {string, variant} = DT_STRING")
+    .SetShapeFn([](InferenceContext* c) {
+      // serialized sparse is [?, ..., ?, 3] vector.
+      DimensionHandle unused;
+      TF_RETURN_IF_ERROR(c->WithValue(c->Dim(c->input(0), -1), 3, &unused));
+      c->set_output(0, c->Matrix(InferenceContext::kUnknownDim,
+                                 InferenceContext::kUnknownDim));
+      c->set_output(1, c->Vector(InferenceContext::kUnknownDim));
+      c->set_output(2, c->Vector(InferenceContext::kUnknownDim));
+      return Status::OK();
+    })
+    .Doc(R"doc(
+Deserialize `SparseTensor` objects.
+
+The input `serialized_sparse` must have the shape `[?, ?, ..., ?, 3]` where
+the last dimension stores serialized `SparseTensor` objects and the other N
+dimensions (N >= 0) correspond to a batch. The ranks of the original
+`SparseTensor` objects must all match. When the final `SparseTensor` is
+created, its rank is the rank of the incoming `SparseTensor` objects plus N;
+the sparse tensors have been concatenated along new dimensions, one for each
+batch.
+
+The output `SparseTensor` object's shape values for the original dimensions
+are the max across the input `SparseTensor` objects' shape values for the
+corresponding dimensions. The new dimensions match the size of the batch.
+
+The input `SparseTensor` objects' indices are assumed ordered in
+standard lexicographic order.  If this is not the case, after this
+step run `SparseReorder` to restore index ordering.
+
+For example, if the serialized input is a `[2 x 3]` matrix representing two
+original `SparseTensor` objects:
+
+    index = [ 0]
+            [10]
+            [20]
+    values = [1, 2, 3]
+    shape = [50]
+
+and
+
+    index = [ 2]
+            [10]
+    values = [4, 5]
+    shape = [30]
+
+then the final deserialized `SparseTensor` will be:
+
+    index = [0  0]
+            [0 10]
+            [0 20]
+            [1  2]
+            [1 10]
+    values = [1, 2, 3, 4, 5]
+    shape = [2 50]
+
+serialized_sparse: The serialized `SparseTensor` objects. The last dimension
+  must have 3 columns.
+dtype: The `dtype` of the serialized `SparseTensor` objects.
 )doc");
 
 REGISTER_OP("DeserializeManySparse")
     .Input("serialized_sparse: string")
-    .Attr("dtype: type")
     .Output("sparse_indices: int64")
     .Output("sparse_values: dtype")
     .Output("sparse_shape: int64")
+    .Attr("dtype: type")
     .SetShapeFn([](InferenceContext* c) {
       // serialized sparse is [?,3] matrix.
       ShapeHandle serialized_sparse;
@@ -597,6 +670,60 @@ output_shape: A list of 1-D tensors represents the shape of the output sparse
   tensors.
 )doc");
 
+REGISTER_OP("SparseSlice")
+    .Input("indices: int64")
+    .Input("values: T")
+    .Input("shape: int64")
+    .Input("start: int64")
+    .Input("size: int64")
+    .Output("output_indices: int64")
+    .Output("output_values: T")
+    .Output("output_shape: int64")
+    .Attr("T: type")
+    .SetShapeFn([](InferenceContext* c) {
+      ShapeHandle input_shape = c->input(2);
+      ShapeHandle output_indices =
+          c->Matrix(InferenceContext::kUnknownDim, c->NumElements(input_shape));
+      ShapeHandle output_values = c->Vector(InferenceContext::kUnknownDim);
+      ShapeHandle output_shape = input_shape;
+
+      c->set_output(0, output_indices);
+      c->set_output(1, output_values);
+      c->set_output(2, output_shape);
+      return Status::OK();
+    })
+    .Doc(R"doc(
+Slice a `SparseTensor` based on the `start` and `size`.
+
+For example, if the input is
+
+    input_tensor = shape = [2, 7]
+    [    a   d e  ]
+    [b c          ]
+
+Graphically the output tensors are:
+
+    sparse_slice([0, 0], [2, 4]) = shape = [2, 4]
+    [    a  ]
+    [b c    ]
+
+    sparse_slice([0, 4], [2, 3]) = shape = [2, 3]
+    [ d e  ]
+    [      ]
+
+indices: 2-D tensor represents the indices of the sparse tensor.
+values: 1-D tensor represents the values of the sparse tensor.
+shape: 1-D. tensor represents the shape of the sparse tensor.
+start: 1-D. tensor represents the start of the slice.
+size: 1-D. tensor represents the size of the slice.
+output indices: A list of 1-D tensors represents the indices of the output
+sparse tensors.
+output_values: A list of 1-D tensors represents the values of the output sparse
+  tensors.
+output_shape: A list of 1-D tensors represents the shape of the output sparse
+  tensors.
+)doc");
+
 REGISTER_OP("SparseReorder")
     .Input("input_indices: int64")
     .Input("input_values: T")
@@ -710,6 +837,75 @@ a_shape: 1-D.  The `shape` of the `SparseTensor`, with shape `[ndims]`.
 b: `ndims`-D Tensor.  With shape `a_shape`.
 )doc");
 
+REGISTER_OP("SparseReduceMax")
+    .Input("input_indices: int64")
+    .Input("input_values: T")
+    .Input("input_shape: int64")
+    .Input("reduction_axes: int32")
+    .Attr("keep_dims: bool = False")
+    .Output("output: T")
+    .Attr("T: realnumbertype")
+    .SetShapeFn(shape_inference::UnknownShape)
+    .Doc(R"doc(
+Computes the max of elements across dimensions of a SparseTensor.
+
+This Op takes a SparseTensor and is the sparse counterpart to
+`tf.reduce_max()`.  In particular, this Op also returns a dense `Tensor`
+instead of a sparse one.
+
+Reduces `sp_input` along the dimensions given in `reduction_axes`.  Unless
+`keep_dims` is true, the rank of the tensor is reduced by 1 for each entry in
+`reduction_axes`. If `keep_dims` is true, the reduced dimensions are retained
+with length 1.
+
+If `reduction_axes` has no entries, all dimensions are reduced, and a tensor
+with a single element is returned.  Additionally, the axes can be negative,
+which are interpreted according to the indexing rules in Python.
+
+input_indices: 2-D.  `N x R` matrix with the indices of non-empty values in a
+  SparseTensor, possibly not in canonical ordering.
+input_values: 1-D.  `N` non-empty values corresponding to `input_indices`.
+input_shape: 1-D.  Shape of the input SparseTensor.
+reduction_axes: 1-D.  Length-`K` vector containing the reduction axes.
+keep_dims: If true, retain reduced dimensions with length 1.
+output: `R-K`-D.  The reduced Tensor.
+)doc");
+
+REGISTER_OP("SparseReduceMaxSparse")
+    .Input("input_indices: int64")
+    .Input("input_values: T")
+    .Input("input_shape: int64")
+    .Input("reduction_axes: int32")
+    .Attr("keep_dims: bool = False")
+    .Output("output_indices: int64")
+    .Output("output_values: T")
+    .Output("output_shape: int64")
+    .Attr("T: realnumbertype")
+    .SetShapeFn(shape_inference::UnknownShape)
+    .Doc(R"doc(
+Computes the max of elements across dimensions of a SparseTensor.
+
+This Op takes a SparseTensor and is the sparse counterpart to
+`tf.reduce_max()`.  In contrast to SparseReduceMax, this Op returns a
+SparseTensor.
+
+Reduces `sp_input` along the dimensions given in `reduction_axes`.  Unless
+`keep_dims` is true, the rank of the tensor is reduced by 1 for each entry in
+`reduction_axes`. If `keep_dims` is true, the reduced dimensions are retained
+with length 1.
+
+If `reduction_axes` has no entries, all dimensions are reduced, and a tensor
+with a single element is returned.  Additionally, the axes can be negative,
+which are interpreted according to the indexing rules in Python.
+
+input_indices: 2-D.  `N x R` matrix with the indices of non-empty values in a
+  SparseTensor, possibly not in canonical ordering.
+input_values: 1-D.  `N` non-empty values corresponding to `input_indices`.
+input_shape: 1-D.  Shape of the input SparseTensor.
+reduction_axes: 1-D.  Length-`K` vector containing the reduction axes.
+keep_dims: If true, retain reduced dimensions with length 1.
+)doc");
+
 REGISTER_OP("SparseReduceSum")
     .Input("input_indices: int64")
     .Input("input_values: T")
@@ -793,7 +989,9 @@ keep_dims: If true, retain reduced dimensions with length 1.
         return Status::OK();                                     \
       })
 
-REGISTER_OP("SparseDenseCwiseMul").SPARSE_DENSE_CWISE_SIGNATURE().Doc(R"doc(
+REGISTER_OP("SparseDenseCwiseMul")
+    .SPARSE_DENSE_CWISE_SIGNATURE()
+    .Doc(R"doc(
 Component-wise multiplies a SparseTensor by a dense Tensor.
 
 The output locations corresponding to the implicitly zero elements in the sparse
@@ -811,7 +1009,9 @@ dense: `R`-D.  The dense Tensor operand.
 output: 1-D.  The `N` values that are operated on.
 )doc");
 
-REGISTER_OP("SparseDenseCwiseDiv").SPARSE_DENSE_CWISE_SIGNATURE().Doc(R"doc(
+REGISTER_OP("SparseDenseCwiseDiv")
+    .SPARSE_DENSE_CWISE_SIGNATURE()
+    .Doc(R"doc(
 Component-wise divides a SparseTensor by a dense Tensor.
 
 *Limitation*: this Op only broadcasts the dense side to the sparse side, but not
@@ -825,7 +1025,9 @@ dense: `R`-D.  The dense Tensor operand.
 output: 1-D.  The `N` values that are operated on.
 )doc");
 
-REGISTER_OP("SparseDenseCwiseAdd").SPARSE_DENSE_CWISE_SIGNATURE().Doc(R"doc(
+REGISTER_OP("SparseDenseCwiseAdd")
+    .SPARSE_DENSE_CWISE_SIGNATURE()
+    .Doc(R"doc(
 Adds up a SparseTensor and a dense Tensor, using these special rules:
 
 (1) Broadcasts the dense side to have the same shape as the sparse side, if

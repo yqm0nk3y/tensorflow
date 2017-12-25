@@ -8,6 +8,9 @@
   * `TF_CUDA_CLANG`: Whether to use clang as a cuda compiler.
   * `CLANG_CUDA_COMPILER_PATH`: The clang compiler path that will be used for
     both host and device code compilation if TF_CUDA_CLANG is 1.
+  * `TF_DOWNLOAD_CLANG`: Whether to download a recent release of clang
+    compiler and use it to build tensorflow. When this option is set
+    CLANG_CUDA_COMPILER_PATH is ignored.
   * `CUDA_TOOLKIT_PATH`: The path to the CUDA toolkit. Default is
     `/usr/local/cuda`.
   * `TF_CUDA_VERSION`: The version of the CUDA toolkit. If this is blank, then
@@ -26,6 +29,8 @@ _TF_CUDA_VERSION = "TF_CUDA_VERSION"
 _TF_CUDNN_VERSION = "TF_CUDNN_VERSION"
 _CUDNN_INSTALL_PATH = "CUDNN_INSTALL_PATH"
 _TF_CUDA_COMPUTE_CAPABILITIES = "TF_CUDA_COMPUTE_CAPABILITIES"
+_TF_CUDA_CONFIG_REPO = "TF_CUDA_CONFIG_REPO"
+_TF_DOWNLOAD_CLANG = "TF_DOWNLOAD_CLANG"
 
 _DEFAULT_CUDA_VERSION = ""
 _DEFAULT_CUDNN_VERSION = ""
@@ -33,6 +38,7 @@ _DEFAULT_CUDA_TOOLKIT_PATH = "/usr/local/cuda"
 _DEFAULT_CUDNN_INSTALL_PATH = "/usr/local/cuda"
 _DEFAULT_CUDA_COMPUTE_CAPABILITIES = ["3.5", "5.2"]
 
+load(":download_clang.bzl", "download_clang")
 
 # TODO(dzc): Once these functions have been factored out of Bazel's
 # cc_configure.bzl, load them from @bazel_tools instead.
@@ -47,6 +53,8 @@ def find_cc(repository_ctx):
   if _use_cuda_clang(repository_ctx):
     target_cc_name = "clang"
     cc_path_envvar = _CLANG_CUDA_COMPILER_PATH
+    if _flag_enabled(repository_ctx, _TF_DOWNLOAD_CLANG):
+      return "extra_tools/bin/clang"
   else:
     target_cc_name = "gcc"
     cc_path_envvar = _GCC_HOST_COMPILER_PATH
@@ -79,6 +87,23 @@ def _cxx_inc_convert(path):
     path = path[:-_OSX_FRAMEWORK_SUFFIX_LEN].strip()
   return path
 
+
+def _normalize_include_path(repository_ctx, path):
+  """Normalizes include paths before writing them to the crosstool.
+
+  If path points inside the 'crosstool' folder of the repository, a relative
+  path is returned.
+  If path points outside the 'crosstool' folder, an absolute path is returned.
+  """
+  path = str(repository_ctx.path(path))
+  crosstool_folder = str(repository_ctx.path(".").get_child('crosstool'))
+
+  if path.startswith(crosstool_folder):
+    # We drop the path to "$REPO/crosstool" and a trailing path separator.
+    return path[len(crosstool_folder)+1:]
+  return path
+
+
 def _get_cxx_inc_directories_impl(repository_ctx, cc, lang_is_cpp):
   """Compute the list of default C or C++ include directories."""
   if lang_is_cpp:
@@ -105,8 +130,11 @@ def _get_cxx_inc_directories_impl(repository_ctx, cc, lang_is_cpp):
   else:
     inc_dirs = result.stderr[index1 + 1:index2].strip()
 
-  return [repository_ctx.path(_cxx_inc_convert(p))
-          for p in inc_dirs.split("\n")]
+  return [
+      _normalize_include_path(repository_ctx, _cxx_inc_convert(p))
+      for p in inc_dirs.split("\n")
+  ]
+
 
 def get_cxx_inc_directories(repository_ctx, cc):
   """Compute the list of default C and C++ include directories."""
@@ -116,7 +144,7 @@ def get_cxx_inc_directories(repository_ctx, cc):
   includes_cpp = _get_cxx_inc_directories_impl(repository_ctx, cc, True)
   includes_c = _get_cxx_inc_directories_impl(repository_ctx, cc, False)
 
-  includes_cpp_set = set(includes_cpp)
+  includes_cpp_set = depset(includes_cpp)
   return includes_cpp + [inc for inc in includes_c
                          if inc not in includes_cpp_set]
 
@@ -739,19 +767,19 @@ def _create_dummy_repository(repository_ctx):
 
   # Create dummy files for the CUDA toolkit since they are still required by
   # tensorflow/core/platform/default/build_config:cuda.
-  repository_ctx.file("cuda/include/cuda.h", "")
-  repository_ctx.file("cuda/include/cublas.h", "")
-  repository_ctx.file("cuda/include/cudnn.h", "")
-  repository_ctx.file("cuda/extras/CUPTI/include/cupti.h", "")
-  repository_ctx.file("cuda/lib/%s" % _lib_name("cuda", cpu_value))
-  repository_ctx.file("cuda/lib/%s" % _lib_name("cudart", cpu_value))
-  repository_ctx.file("cuda/lib/%s" % _lib_name("cudart_static", cpu_value))
-  repository_ctx.file("cuda/lib/%s" % _lib_name("cublas", cpu_value))
-  repository_ctx.file("cuda/lib/%s" % _lib_name("cusolver", cpu_value))
-  repository_ctx.file("cuda/lib/%s" % _lib_name("cudnn", cpu_value))
-  repository_ctx.file("cuda/lib/%s" % _lib_name("curand", cpu_value))
-  repository_ctx.file("cuda/lib/%s" % _lib_name("cufft", cpu_value))
-  repository_ctx.file("cuda/lib/%s" % _lib_name("cupti", cpu_value))
+  repository_ctx.file("cuda/cuda/include/cuda.h", "")
+  repository_ctx.file("cuda/cuda/include/cublas.h", "")
+  repository_ctx.file("cuda/cuda/include/cudnn.h", "")
+  repository_ctx.file("cuda/cuda/extras/CUPTI/include/cupti.h", "")
+  repository_ctx.file("cuda/cuda/lib/%s" % _lib_name("cuda", cpu_value))
+  repository_ctx.file("cuda/cuda/lib/%s" % _lib_name("cudart", cpu_value))
+  repository_ctx.file("cuda/cuda/lib/%s" % _lib_name("cudart_static", cpu_value))
+  repository_ctx.file("cuda/cuda/lib/%s" % _lib_name("cublas", cpu_value))
+  repository_ctx.file("cuda/cuda/lib/%s" % _lib_name("cusolver", cpu_value))
+  repository_ctx.file("cuda/cuda/lib/%s" % _lib_name("cudnn", cpu_value))
+  repository_ctx.file("cuda/cuda/lib/%s" % _lib_name("curand", cpu_value))
+  repository_ctx.file("cuda/cuda/lib/%s" % _lib_name("cufft", cpu_value))
+  repository_ctx.file("cuda/cuda/lib/%s" % _lib_name("cupti", cpu_value))
 
   # Set up cuda_config.h, which is used by
   # tensorflow/stream_executor/dso_loader.cc.
@@ -763,7 +791,7 @@ def _create_dummy_repository(repository_ctx):
                "CudaVersion(\"%s\")" % c
                for c in _DEFAULT_CUDA_COMPUTE_CAPABILITIES]),
            "%{cuda_toolkit_path}": _DEFAULT_CUDA_TOOLKIT_PATH,
-       })
+       }, "cuda/cuda/cuda_config.h")
 
   # If cuda_configure is not configured to build with GPU support, and the user
   # attempts to build with --config=cuda, add a dummy build rule to intercept
@@ -820,6 +848,13 @@ def _symlink_genrule_for_dir(repository_ctx, src_dir, dest_dir, genrule_name,
     dest_files = files.replace(src_dir, '').splitlines()
     src_files = files.splitlines()
   command = []
+  if not _is_windows(repository_ctx):
+    # We clear folders that might have been generated previously to avoid
+    # undesired inclusions
+    command.append('if [ -d "$(@D)/extras" ]; then rm $(@D)/extras -drf; fi')
+    command.append('if [ -d "$(@D)/include" ]; then rm $(@D)/include -drf; fi')
+    command.append('if [ -d "$(@D)/lib" ]; then rm $(@D)/lib -drf; fi')
+    command.append('if [ -d "$(@D)/nvvm" ]; then rm $(@D)/nvvm -drf; fi')
   outs = []
   for i in range(len(dest_files)):
     if dest_files[i] != "":
@@ -829,7 +864,7 @@ def _symlink_genrule_for_dir(repository_ctx, src_dir, dest_dir, genrule_name,
       # On Windows, symlink is not supported, so we just copy all the files.
       cmd = 'cp -f' if _is_windows(repository_ctx) else 'ln -s'
       command.append(cmd + ' "%s" "%s"' % (src_files[i] , dest))
-      outs.append('      "' + dest_dir + dest_files[i] + '",')
+      outs.append('        "' + dest_dir + dest_files[i] + '",')
   genrule = _genrule(src_dir, genrule_name, " && ".join(command),
                      "\n".join(outs))
   return genrule
@@ -846,11 +881,11 @@ def _genrule(src_dir, genrule_name, command, outs):
       genrule_name + '",\n' +
       '    outs = [\n' +
       outs +
-      '    ],\n' +
+      '\n    ],\n' +
       '    cmd = """\n' +
       command +
-      '    """,\n' +
-      ')\n\n'
+      '\n   """,\n' +
+      ')\n'
   )
 
 
@@ -876,22 +911,25 @@ def _read_dir(repository_ctx, src_dir):
     result = find_result.stdout
   return result
 
-
-def _use_cuda_clang(repository_ctx):
-  if "TF_CUDA_CLANG" in repository_ctx.os.environ:
-    enable_cuda = repository_ctx.os.environ["TF_CUDA_CLANG"].strip()
-    return enable_cuda == "1"
+def _flag_enabled(repository_ctx, flag_name):
+  if flag_name in repository_ctx.os.environ:
+    value = repository_ctx.os.environ[flag_name].strip()
+    return value == "1"
   return False
 
-def _compute_cuda_extra_copts(repository_ctx, cuda_config):
+def _use_cuda_clang(repository_ctx):
+  return _flag_enabled(repository_ctx, "TF_CUDA_CLANG")
+
+def _compute_cuda_extra_copts(repository_ctx, compute_capabilities):
   if _use_cuda_clang(repository_ctx):
-    capability_flags = ["--cuda-gpu-arch=sm_" + cap.replace(".", "") for cap in cuda_config.compute_capabilities]
+    capability_flags = ["--cuda-gpu-arch=sm_" +
+        cap.replace(".", "") for cap in compute_capabilities]
   else:
     # Capabilities are handled in the "crosstool_wrapper_driver_is_not_gcc" for nvcc
     capability_flags = []
   return str(capability_flags)
 
-def _create_cuda_repository(repository_ctx):
+def _create_local_cuda_repository(repository_ctx):
   """Creates the repository containing files set up to build with CUDA."""
   cuda_config = _get_cuda_config(repository_ctx)
 
@@ -904,19 +942,19 @@ def _create_cuda_repository(repository_ctx):
   cuda_toolkit_path = cuda_config.cuda_toolkit_path
   cuda_include_path = cuda_toolkit_path + "/include"
   genrules = [_symlink_genrule_for_dir(repository_ctx,
-      cuda_include_path, "include", "cuda-include")]
+      cuda_include_path, "cuda/include", "cuda-include")]
   genrules.append(_symlink_genrule_for_dir(repository_ctx,
-      cuda_toolkit_path + "/nvvm", "nvvm", "cuda-nvvm"))
+      cuda_toolkit_path + "/nvvm", "cuda/nvvm", "cuda-nvvm"))
   genrules.append(_symlink_genrule_for_dir(repository_ctx,
       cuda_toolkit_path + "/extras/CUPTI/include",
-      "extras/CUPTI/include", "cuda-extras"))
+      "cuda/extras/CUPTI/include", "cuda-extras"))
 
   cuda_libs = _find_libs(repository_ctx, cuda_config)
   cuda_lib_src = []
   cuda_lib_dest = []
   for lib in cuda_libs.values():
     cuda_lib_src.append(lib.path)
-    cuda_lib_dest.append("lib/" + lib.file_name)
+    cuda_lib_dest.append("cuda/lib/" + lib.file_name)
   genrules.append(_symlink_genrule_for_dir(repository_ctx, None, "", "cuda-lib",
                                        cuda_lib_src, cuda_lib_dest))
 
@@ -925,8 +963,9 @@ def _create_cuda_repository(repository_ctx):
   included_files = _read_dir(repository_ctx, cuda_include_path).replace(
       cuda_include_path, '').splitlines()
   if '/cudnn.h' not in included_files:
-    genrules.append(_symlink_genrule_for_dir(repository_ctx, None, "include/",
-        "cudnn-include", [cudnn_header_dir + "/cudnn.h"], ["cudnn.h"]))
+    genrules.append(_symlink_genrule_for_dir(repository_ctx, None,
+        "cuda/include/", "cudnn-include", [cudnn_header_dir + "/cudnn.h"],
+        ["cudnn.h"]))
   else:
     genrules.append(
             'filegroup(\n' +
@@ -939,7 +978,8 @@ def _create_cuda_repository(repository_ctx):
   _tpl(repository_ctx, "cuda:build_defs.bzl",
        {
            "%{cuda_is_configured}": "True",
-           "%{cuda_extra_copts}": _compute_cuda_extra_copts(repository_ctx, cuda_config),
+           "%{cuda_extra_copts}": _compute_cuda_extra_copts(
+               repository_ctx, cuda_config.compute_capabilities),
 
        })
   _tpl(repository_ctx, "cuda:BUILD",
@@ -959,22 +999,35 @@ def _create_cuda_repository(repository_ctx):
            "%{cuda_headers}": ('":cuda-include",\n' +
                                '        ":cudnn-include",')
        })
+
+  is_cuda_clang = _use_cuda_clang(repository_ctx)
+
+  should_download_clang = is_cuda_clang and _flag_enabled(
+      repository_ctx, _TF_DOWNLOAD_CLANG)
+  if should_download_clang:
+    download_clang(repository_ctx, "crosstool/extra_tools")
+
   # Set up crosstool/
-  _file(repository_ctx, "crosstool:BUILD")
   cc = find_cc(repository_ctx)
-  host_compiler_includes = _host_compiler_includes(repository_ctx, cc)
+  cc_fullpath = cc if not should_download_clang else "crosstool/" + cc
+
+  host_compiler_includes = _host_compiler_includes(repository_ctx, cc_fullpath)
   cuda_defines = {
            "%{cuda_include_path}": _cuda_include_path(repository_ctx,
                                                       cuda_config),
            "%{host_compiler_includes}": host_compiler_includes,
        }
-  if _use_cuda_clang(repository_ctx):
+  if is_cuda_clang:
     cuda_defines["%{clang_path}"] = cc
+    _tpl(repository_ctx, "crosstool:BUILD", {"%{linker_files}": ":empty"})
     _tpl(repository_ctx, "crosstool:CROSSTOOL_clang", cuda_defines, out="crosstool/CROSSTOOL")
+    repository_ctx.file("crosstool/clang/bin/crosstool_wrapper_driver_is_not_gcc", "")
   else:
     nvcc_path = str(repository_ctx.path("%s/bin/nvcc%s" %
         (cuda_config.cuda_toolkit_path,
         ".exe" if cuda_config.cpu_value == "Windows" else "")))
+    _tpl(repository_ctx, "crosstool:BUILD",
+         {"%{linker_files}": ":crosstool_wrapper_driver_is_not_gcc"})
     _tpl(repository_ctx, "crosstool:CROSSTOOL_nvcc", cuda_defines, out="crosstool/CROSSTOOL")
     _tpl(repository_ctx,
          "crosstool:clang/bin/crosstool_wrapper_driver_is_not_gcc",
@@ -997,28 +1050,51 @@ def _create_cuda_repository(repository_ctx):
                ["CudaVersion(\"%s\")" % c
                 for c in cuda_config.compute_capabilities]),
                "%{cuda_toolkit_path}": cuda_config.cuda_toolkit_path,
-       })
+       }, "cuda/cuda/cuda_config.h")
 
+def _create_remote_cuda_repository(repository_ctx, remote_config_repo):
+  """Creates pointers to a remotely configured repo set up to build with CUDA."""
+  _tpl(repository_ctx, "cuda:build_defs.bzl",
+       {
+           "%{cuda_is_configured}": "True",
+           "%{cuda_extra_copts}": _compute_cuda_extra_copts(
+               repository_ctx, _compute_capabilities(repository_ctx)),
+
+       })
+  _tpl(repository_ctx, "cuda:remote.BUILD",
+       {
+           "%{remote_cuda_repo}": remote_config_repo,
+       }, "cuda/BUILD")
+  _tpl(repository_ctx, "crosstool:remote.BUILD", {
+           "%{remote_cuda_repo}": remote_config_repo,
+       }, "crosstool/BUILD")
 
 def _cuda_autoconf_impl(repository_ctx):
   """Implementation of the cuda_autoconf repository rule."""
   if not _enable_cuda(repository_ctx):
     _create_dummy_repository(repository_ctx)
   else:
-    _create_cuda_repository(repository_ctx)
-
+    if _TF_CUDA_CONFIG_REPO in repository_ctx.os.environ:
+      _create_remote_cuda_repository(repository_ctx,
+          repository_ctx.os.environ[_TF_CUDA_CONFIG_REPO])
+    else:
+      _create_local_cuda_repository(repository_ctx)
 
 
 cuda_configure = repository_rule(
     implementation = _cuda_autoconf_impl,
     environ = [
         _GCC_HOST_COMPILER_PATH,
+        _CLANG_CUDA_COMPILER_PATH,
         "TF_NEED_CUDA",
+        "TF_CUDA_CLANG",
+        _TF_DOWNLOAD_CLANG,
         _CUDA_TOOLKIT_PATH,
         _CUDNN_INSTALL_PATH,
         _TF_CUDA_VERSION,
         _TF_CUDNN_VERSION,
         _TF_CUDA_COMPUTE_CAPABILITIES,
+        _TF_CUDA_CONFIG_REPO,
     ],
 )
 

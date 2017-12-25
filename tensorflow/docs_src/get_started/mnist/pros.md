@@ -49,7 +49,7 @@ these two lines of code which will download and read in the data automatically:
 
 ```python
 from tensorflow.examples.tutorials.mnist import input_data
-mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
+mnist = input_data.read_data_sets('MNIST_data')
 ```
 
 Here `mnist` is a lightweight class which stores the training, validation, and
@@ -172,8 +172,7 @@ between the target and the softmax activation function applied to the model's
 prediction.  As in the beginners tutorial, we use the stable formulation:
 
 ```python
-cross_entropy = tf.reduce_mean(
-    tf.nn.softmax_cross_entropy_with_logits(labels=y_, logits=y))
+cross_entropy = tf.losses.sparse_softmax_cross_entropy(labels=y_, logits=y))
 ```
 
 Note that `tf.nn.softmax_cross_entropy_with_logits` internally applies the
@@ -249,6 +248,12 @@ Getting 92% accuracy on MNIST is bad. It's almost embarrassingly bad. In this
 section, we'll fix that, jumping from a very simple model to something
 moderately sophisticated: a small convolutional neural network. This will get us
 to around 99.2% accuracy -- not state of the art, but respectable.
+
+Here is a diagram, created with TensorBoard, of the model we will build:
+
+<div style="width:40%; margin:auto; margin-bottom:10px; margin-top:20px;">
+<img src="https://www.tensorflow.org/images/mnist_deep.png">
+</div>
 
 ### Weight Initialization
 
